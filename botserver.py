@@ -7,7 +7,7 @@ import uvicorn
 import os
 
 # ================= DISCORD SETUP =================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
