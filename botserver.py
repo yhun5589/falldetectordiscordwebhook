@@ -4,6 +4,7 @@ import cv2
 from fastapi import FastAPI, UploadFile, File, Form
 from io import BytesIO
 import uvicorn
+import os
 
 # ================= DISCORD SETUP =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
