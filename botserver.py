@@ -24,7 +24,8 @@ async def on_ready():
     loop = asyncio.get_running_loop()
     print("✅ Discord bot ready")
 
-# ================= API ENDPOINT =================@app.post("/send_alert")
+# ================= API ENDPOINT =================
+@app.post("/send_alert")
 async def send_alert(
     guild_id: int = Form(...),
     message: str = Form(...),
