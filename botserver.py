@@ -24,8 +24,7 @@ async def on_ready():
     loop = asyncio.get_running_loop()
     print("✅ Discord bot ready")
 
-# ================= API ENDPOINT =================
-@app.post("/send_alert")
+# ================= API ENDPOINT =================@app.post("/send_alert")
 async def send_alert(
     guild_id: int = Form(...),
     message: str = Form(...),
@@ -38,7 +37,7 @@ async def send_alert(
     if not guild:
         return {"status": "Guild not found"}
 
-    # Find first text channel with permission
+    # Find first valid text channel
     channel = None
     for ch in guild.text_channels:
         if ch.permissions_for(guild.me).send_messages:
@@ -48,17 +47,32 @@ async def send_alert(
     if not channel:
         return {"status": "No valid channel found"}
 
-    async def send():
-        await channel.send(message)
+    # ✅ CRITICAL: Read image immediately inside FastAPI request
+    file = None
 
-        if image:
-            data = await image.read()
-            file = discord.File(BytesIO(data), filename="alert.jpg")
-            await channel.send(file=file)
+    if image is not None:
+        contents = await image.read()
+
+        print("Filename:", image.filename)
+        print("Content-Type:", image.content_type)
+        print("Image size:", len(contents))
+
+        if len(contents) > 0:
+            file = discord.File(
+                BytesIO(contents),
+                filename=image.filename or "alert.jpg"
+            )
+
+    # ✅ Send safely inside Discord loop
+    async def send():
+        if file:
+            await channel.send(content=message, file=file)
+        else:
+            await channel.send(message)
 
     asyncio.run_coroutine_threadsafe(send(), loop)
 
-    return {"status": "Alert sent"}
+    return {"status": "Alert sent", "has_file": file is not None}
 
 # ================= START BOTH =================
 def start():
