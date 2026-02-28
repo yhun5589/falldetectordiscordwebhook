@@ -1,28 +1,53 @@
 import discord
 import asyncio
-import cv2
+import threading
 from fastapi import FastAPI, UploadFile, File, Form
 from io import BytesIO
 import uvicorn
 import os
+import requests
+import time
 
-# ================= DISCORD SETUP =================
+# ================= CONFIG =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
-intents = discord.Intents.default()
-client = discord.Client(intents=intents)
-
-loop = None
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 # ================= FASTAPI =================
 app = FastAPI()
 
-# ================= DISCORD READY =================
+# ================= DISCORD SETUP =================
+intents = discord.Intents.default()
+client = discord.Client(intents=intents)
+
+# Create dedicated event loop for Discord
+discord_loop = asyncio.new_event_loop()
+
+# ================= HEALTH ROUTE =================
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+# ================= AUTO SELF PING =================
+def self_ping():
+    """
+    Pings own health endpoint every 50 seconds.
+    Helps reduce cold sleep on Render free tier.
+    """
+    if not RENDER_EXTERNAL_URL:
+        return
+
+    while True:
+        try:
+            requests.get(f"{RENDER_EXTERNAL_URL}/health", timeout=10)
+        except Exception as e:
+            print("Self ping error:", e)
+
+        time.sleep(50)
+
+# ================= DISCORD EVENTS =================
 @client.event
 async def on_ready():
-    global loop
-    loop = asyncio.get_running_loop()
-    print("✅ Discord bot ready")
+    print(f"✅ Discord bot ready: {client.user}")
 
 # ================= API ENDPOINT =================
 @app.post("/send_alert")
@@ -31,10 +56,8 @@ async def send_alert(
     message: str = Form(...),
     image: UploadFile = File(None)
 ):
-    if loop is None:
-        return {"status": "Discord not ready"}
-
     guild = client.get_guild(guild_id)
+
     if not guild:
         return {"status": "Guild not found"}
 
@@ -48,15 +71,10 @@ async def send_alert(
     if not channel:
         return {"status": "No valid channel found"}
 
-    # ✅ CRITICAL: Read image immediately inside FastAPI request
     file = None
 
     if image is not None:
         contents = await image.read()
-
-        print("Filename:", image.filename)
-        print("Content-Type:", image.content_type)
-        print("Image size:", len(contents))
 
         if len(contents) > 0:
             file = discord.File(
@@ -64,22 +82,41 @@ async def send_alert(
                 filename=image.filename or "alert.jpg"
             )
 
-    # ✅ Send safely inside Discord loop
     async def send():
-        if file:
-            await channel.send(content=message, file=file)
-        else:
-            await channel.send(message)
+        try:
+            if file:
+                await channel.send(content=message, file=file)
+                file.close()  # prevent memory leak
+            else:
+                await channel.send(message)
+        except Exception as e:
+            print("Discord send error:", e)
 
-    asyncio.run_coroutine_threadsafe(send(), loop)
+    asyncio.run_coroutine_threadsafe(send(), discord_loop)
 
     return {"status": "Alert sent", "has_file": file is not None}
 
-# ================= START BOTH =================
-def start():
-    import threading
-    threading.Thread(target=lambda: client.run(BOT_TOKEN)).start()
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# ================= START FUNCTIONS =================
+def start_discord():
+    asyncio.set_event_loop(discord_loop)
+    discord_loop.run_until_complete(client.start(BOT_TOKEN))
 
+def start_self_ping():
+    thread = threading.Thread(target=self_ping, daemon=True)
+    thread.start()
+
+# ================= MAIN ENTRY =================
 if __name__ == "__main__":
-    start()
+    # Start Discord in background
+    threading.Thread(target=start_discord, daemon=True).start()
+
+    # Start self-ping
+    start_self_ping()
+
+    # Start FastAPI server
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8000)),
+        workers=1
+    )
